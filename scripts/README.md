@@ -26,6 +26,22 @@ bun run scripts/test-decode.ts
   - Slot
   - UUID
 
+**実装:**
+
+このスクリプトは、`src/utils/drift-decoder.ts`モジュールを使用しています。デコード関数は他のプロジェクトでも再利用可能です。
+
+```typescript
+import { decodeDriftInstructions, formatDecodedInstruction } from "../src/utils/drift-decoder";
+
+// トランザクションからDrift instructionsをデコード
+const decodedInstructions = decodeDriftInstructions(tx, driftProgramId, driftClient);
+
+// 結果を出力
+for (const decoded of decodedInstructions) {
+  console.log(formatDecodedInstruction(decoded));
+}
+```
+
 **重要な実装の詳細:**
 
 `placeSignedMsgTakerOrder`のinstruction dataは以下の構造を持ちます：

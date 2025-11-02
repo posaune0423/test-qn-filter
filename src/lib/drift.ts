@@ -1,7 +1,7 @@
 import { BulkAccountLoader, DriftClient, FastSingleTxSender, initialize, PublicKey, Wallet } from "@drift-labs/sdk";
 import { Connection, Keypair } from "@solana/web3.js";
 
-const RPC_URL = process.env.QUICKNODE_RPC_URL || "";
+const RPC_URL = process.env.RPC_URL || "";
 const ENVIRONMENT = "mainnet-beta";
 
 export const sdkConfig = initialize({ env: ENVIRONMENT });
