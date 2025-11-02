@@ -1,0 +1,125 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Basic Rules
+
+- **絶対に**コードを書き始める前に、実装方針をこちらに伝えてOKをもらってから実装を始めて下さい
+- `npm`ではなく**必ず**`pnpm`を使って下さい！！
+- `node`はv22以降defaultでtsファイルを実行できます、`package.json`でtsファイルを実行する場合は`node --experimental-strip-types --experimental-transform-types --experimental-detect-module --no-warnings=ExperimentalWarning`で実行して下さい
+- build errorの解決などは勝手に`tsup`などの依存をいれるのではなく根本原因を考え、`pnpm run build`が通るようにして下さい、
+- errorを直す時はどういう意図・仮説でどういう処理を施すのかをちゃんと考えながら対処して下さい。
+
+## Practices
+
+- 小さく始めて段階的に拡張
+- 過度な抽象化を避ける
+- コードよりも型を重視
+- 複雑さに応じてアプローチを調整
+
+## Code Style
+
+- 関数優先（クラスは必要な場合のみ）
+- 不変更新パターンの活用
+- 早期リターンで条件分岐をフラット化
+- エラーとユースケースの列挙型定義
+
+## Adapter Pattern
+
+- 外部依存を抽象化
+- インターフェースは呼び出し側で定義
+- テスト時は容易に差し替え可能
+
+## 実装手順
+
+1. **型設計**
+
+   - まず型を定義
+   - ドメインの言語を型で表現
+
+2. **純粋関数から実装**
+
+   - 外部依存のない関数を先に
+   - テストを先に書く
+
+3. **副作用を分離**
+
+   - IO 操作は関数の境界に押し出す
+   - 副作用を持つ処理を Promise でラップ
+
+4. **アダプター実装**
+   - 外部サービスや DB へのアクセスを抽象化
+   - テスト用モックを用意
+
+## ディレクトリ構造
+
+```zsh
+.
+├── README.md                       # プロジェクト概要・セットアップ
+├── next.config.mjs                 # Next.js 設定
+├── package.json                    # 依存関係・スクリプト
+├── pnpm-lock.yaml                  # 依存ロックファイル
+├── postcss.config.cjs              # PostCSS 設定
+├── prettier.config.cjs             # Prettier 設定
+├── tailwind.config.ts              # Tailwind CSS 設定
+├── tsconfig.json                   # TypeScript 設定
+├── turbo.json                      # タスク/キャッシュ最適化設定
+├── vercel.json                     # Vercel デプロイ設定
+├── wagmi.config.ts                 # Web3 (wagmi/viem) 設定
+├── prisma                          # Prisma スキーマ/マイグレーション
+├── public                          # 直配信される静的ファイル
+│   ├── assets                      # 画像/動画などのアセット
+│   │   ├── images                  # 多数のため中身省略
+│   │   └── splashscreens           # PWA スプラッシュ画像
+│   └── manifest.json               # PWA マニフェスト
+├── emails                          # メールテンプレート
+│   ├── activity.tsx                # 活動通知メール
+│   ├── mint.tsx                    # ミント関連メール
+│   ├── news.tsx                    # ニュース配信メール
+│   ├── orderConfirmation.tsx       # 注文確認メール
+│   ├── redeem.tsx                  # 受け取り/引換メール
+│   ├── utils.ts                    # メール共通ユーティリティ
+│   └── welcome.tsx                 # ウェルカムメール
+├── scripts                         # 運用/開発用スクリプト
+│   ├── const.ts                    # スクリプト用定数
+│   ├── registerMetadata.ts         # メタデータ登録処理
+│   ├── seed.ts                     # 開発用データ投入
+│   └── truncate.ts                 # データ初期化
+├── src                             # アプリケーション本体
+│   ├── app                         # App Router 配下のページ/ルート
+│   │   ├── _parts/                 # トップ等のセクション分割UI
+│   │   ├── account/                # アカウント画面
+│   │   ├── admin/                  # 管理画面
+│   │   ├── api/                    # Route Handlers (サーバーAPI)
+│   │   ├── collectible/            # コレクタブル詳細ページ
+│   │   ├── collectibles/           # コレクタブル一覧ページ
+│   │   ├── membership/             # 会員/メンバーシップ
+│   │   ├── mint/                   # ミント関連UI
+│   │   ├── payment/                # 決済 (3DS 等)
+│   │   ├── redeem/                 # 受け取り/引換フロー
+│   │   ├── settings/               # 設定画面
+│   │   ├── vault/                  # 保管庫関連UI
+│   │   ├── layout.tsx              # ルートレイアウト
+│   │   ├── page.tsx                # ルートページ
+│   │   └── globals.scss            # グローバルスタイル
+│   ├── components                  # 再利用 UI コンポーネント
+│   ├── constants                   # 定数・設定値
+│   ├── context                     # React Context/Provider
+│   ├── env.mjs                     # 環境変数定義/検証
+│   ├── hooks                       # カスタムフック
+│   ├── lib                         # 外部サービス連携/アダプター
+│   ├── middleware.ts               # Next.js ミドルウェア
+│   ├── server                      # サーバー側ビジネスロジック
+│   ├── sw                          # Service Worker 関連
+│   ├── types                       # 型定義
+│   └── utils                       # 汎用ユーティリティ関数
+├── static                          # インポートして使う静的アセット
+│   ├── crystals.png                # 画像例
+│   ├── crystals2.png               # 画像例
+│   ├── crystals3.png               # 画像例
+│   ├── icon_discord.png            # SNS アイコン
+│   ├── icon_twitter.png            # SNS アイコン
+│   └── logo.png                    # ロゴ
+└── node_modules                    # 依存パッケージ
+```
