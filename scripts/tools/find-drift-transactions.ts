@@ -12,8 +12,10 @@
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
+import { DRIFT_PROGRAM_ID } from "../../src/const";
+import { getOptionalRpcUrl } from "../../src/utils/env";
 
-const DRIFT_PROGRAM_ID = new PublicKey("dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH");
+const DRIFT_PROGRAM_ID_PK = new PublicKey(DRIFT_PROGRAM_ID);
 
 interface DriftTransaction {
   signature: string;
@@ -43,7 +45,7 @@ function extractDiscriminator(data: Buffer): { base64: string; hex: string; firs
  * Known discriminators for Drift perp instructions
  */
 const KNOWN_DISCRIMINATORS: Record<string, string> = {
-  "Pe62ShZLxbSn": "placePerpOrder",
+  Pe62ShZLxbSn: "placePerpOrder",
   // Add more as they are discovered
 };
 
@@ -67,19 +69,21 @@ async function scanBlock(connection: Connection, slot: number): Promise<DriftTra
       const message = tx.transaction.message;
 
       // Check versioned transaction
-      if ('compiledInstructions' in message) {
+      if ("compiledInstructions" in message) {
         const accountKeys = message.staticAccountKeys;
 
         for (const ix of message.compiledInstructions) {
           const programId = accountKeys[ix.programIdIndex];
 
-          if (programId.equals(DRIFT_PROGRAM_ID)) {
+          if (!programId) continue;
+
+          if (programId.equals(DRIFT_PROGRAM_ID_PK)) {
             const data = Buffer.from(ix.data);
             const disc = extractDiscriminator(data);
             const signature = tx.transaction.signatures[0];
 
             driftTransactions.push({
-              signature,
+              signature: signature || "",
               slot,
               discriminator: disc.first12,
               discriminatorHex: `0x${disc.hex}`,
@@ -101,7 +105,7 @@ async function scanBlock(connection: Connection, slot: number): Promise<DriftTra
  * Main function
  */
 async function findDriftTransactions(): Promise<void> {
-  const rpcUrl = process.env.RPC_URL || process.env.QUICKNODE_RPC_URL;
+  const rpcUrl = getOptionalRpcUrl();
 
   if (!rpcUrl) {
     console.error("Error: RPC_URL or QUICKNODE_RPC_URL environment variable is required");
@@ -114,7 +118,7 @@ async function findDriftTransactions(): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--blocks" && i + 1 < args.length) {
-      blockCount = parseInt(args[i + 1], 10);
+      blockCount = parseInt(args[i + 1] || "50", 10);
       i++;
     }
   }
@@ -149,7 +153,7 @@ async function findDriftTransactions(): Promise<void> {
     }
 
     // Small delay to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   console.log("\n");
@@ -171,20 +175,20 @@ async function findDriftTransactions(): Promise<void> {
   }
 
   for (const [discriminator, transactions] of groupedByDiscriminator.entries()) {
-    const instructionName = transactions[0].instructionName || "unknown";
+    const instructionName = transactions[0]?.instructionName || "unknown";
     console.log(`${instructionName} (${discriminator}):`);
     console.log(`  Count: ${transactions.length}`);
     console.log(`  Example signatures:`);
 
     // Show up to 3 example signatures
     for (let i = 0; i < Math.min(3, transactions.length); i++) {
-      console.log(`    ${transactions[i].signature}`);
+      console.log(`    ${transactions[i]?.signature || ""}`);
     }
     console.log("");
   }
 
   // Show unknown discriminators
-  const unknownTransactions = allTransactions.filter(tx => tx.instructionName === "unknown");
+  const unknownTransactions = allTransactions.filter((tx) => tx.instructionName === "unknown");
   if (unknownTransactions.length > 0) {
     console.log("=".repeat(80));
     console.log("Unknown Discriminators (add to KNOWN_DISCRIMINATORS)");

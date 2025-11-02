@@ -3,8 +3,10 @@
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
+import { DRIFT_PROGRAM_ID } from "../../src/const";
+import { getOptionalRpcUrl } from "../../src/utils/env";
 
-const DRIFT_PROGRAM_ID = new PublicKey("dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH");
+const DRIFT_PROGRAM_ID_PK = new PublicKey(DRIFT_PROGRAM_ID);
 
 async function analyzeTransaction(signature: string, rpcUrl: string) {
   const connection = new Connection(rpcUrl, "confirmed");
@@ -23,7 +25,7 @@ async function analyzeTransaction(signature: string, rpcUrl: string) {
   }
 
   console.log(`Slot: ${tx.slot}`);
-  console.log(`Block Time: ${tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : 'N/A'}`);
+  console.log(`Block Time: ${tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : "N/A"}`);
   console.log(`Success: ${!tx.meta?.err}`);
   console.log("");
 
@@ -33,7 +35,7 @@ async function analyzeTransaction(signature: string, rpcUrl: string) {
   let driftInstructionIndex = 0;
   let totalInstructionIndex = 0;
 
-  if ('compiledInstructions' in message) {
+  if ("compiledInstructions" in message) {
     const accountKeys = message.staticAccountKeys;
 
     console.log(`Total instructions in transaction: ${message.compiledInstructions.length}`);
@@ -42,7 +44,9 @@ async function analyzeTransaction(signature: string, rpcUrl: string) {
     for (const ix of message.compiledInstructions) {
       const programId = accountKeys[ix.programIdIndex];
 
-      if (programId.equals(DRIFT_PROGRAM_ID)) {
+      if (!programId) continue;
+
+      if (programId.equals(DRIFT_PROGRAM_ID_PK)) {
         const data = Buffer.from(ix.data);
         const discriminator = data.slice(0, 8);
         const first12Chars = discriminator.toString("base64").substring(0, 12);
@@ -77,7 +81,7 @@ async function analyzeTransaction(signature: string, rpcUrl: string) {
 }
 
 async function main() {
-  const rpcUrl = process.env.RPC_URL || process.env.QUICKNODE_RPC_URL;
+  const rpcUrl = getOptionalRpcUrl();
 
   if (!rpcUrl) {
     console.error("Error: RPC_URL or QUICKNODE_RPC_URL required");
@@ -87,19 +91,19 @@ async function main() {
   const signatures = [
     {
       sig: "2XZEL1VY8d8ZRgLsjMNAMLDGPt5oPBy1nz9ho2ZZXcLWwmjrscNhRjipX45WiEh7NGKKktabfoCq5dWGGn2DwYvS",
-      name: "placeSignedMsgTakerOrder"
+      name: "placeSignedMsgTakerOrder",
     },
     {
       sig: "2EfEUs1ieBCWxBXnTakkH9cdTH6DbBzyTJte9uxjuGmZJ2Teza2jwBH7T4EgtNXUQyPRnDYfZSgyj8nXTjtoex28",
-      name: "placeAndMakeSignedMsgPerpOrder"
-    }
+      name: "placeAndMakeSignedMsgPerpOrder",
+    },
   ];
 
   for (const { sig, name } of signatures) {
     console.log(`\n${"=".repeat(80)}`);
     console.log(`Expected: ${name}`);
     await analyzeTransaction(sig, rpcUrl);
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
 

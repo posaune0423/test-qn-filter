@@ -6,8 +6,8 @@
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
-
-const DRIFT_PROGRAM_ID = "dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
+import { DRIFT_PROGRAM_ID } from "../../src/const";
+import { getOptionalRpcUrl } from "../../src/utils/env";
 
 interface DiscriminatorInfo {
   instructionName: string;
@@ -39,11 +39,11 @@ async function extractDiscriminator(
 
     let driftInstruction: { data: Uint8Array; accountsCount: number } | null = null;
 
-    if ('compiledInstructions' in message) {
+    if ("compiledInstructions" in message) {
       const accountKeys = message.staticAccountKeys;
       for (const ix of message.compiledInstructions) {
         const programId = accountKeys[ix.programIdIndex];
-        if (programId && programId.equals(driftProgramId)) {
+        if (programId?.equals(driftProgramId)) {
           driftInstruction = {
             data: ix.data,
             accountsCount: ix.accountKeyIndexes.length,
@@ -53,12 +53,20 @@ async function extractDiscriminator(
       }
     } else {
       // Legacy message format
-      const legacyMessage = message as any;
+      type LegacyMessage = {
+        accountKeys?: PublicKey[];
+        instructions?: Array<{
+          programIdIndex: number;
+          data: Uint8Array;
+          accounts: number[];
+        }>;
+      };
+      const legacyMessage = message as unknown as LegacyMessage;
       if (legacyMessage.accountKeys && legacyMessage.instructions) {
         const accountKeys = legacyMessage.accountKeys;
         for (const ix of legacyMessage.instructions) {
           const programId = accountKeys[ix.programIdIndex];
-          if (programId && programId.equals(driftProgramId)) {
+          if (programId?.equals(driftProgramId)) {
             driftInstruction = {
               data: ix.data,
               accountsCount: ix.accounts.length,
@@ -104,7 +112,7 @@ export async function verifyDiscriminator(signature: string, instructionName: st
 
 // Run as standalone script
 if (import.meta.main) {
-  const rpcUrl = process.env.RPC_URL || process.env.QUICKNODE_RPC_URL;
+  const rpcUrl = getOptionalRpcUrl();
 
   if (!rpcUrl) {
     console.error("Error: RPC_URL or QUICKNODE_RPC_URL environment variable is required");
@@ -120,9 +128,9 @@ if (import.meta.main) {
   }
 
   verifyDiscriminator(signature, instructionName, rpcUrl)
-    .then(result => {
+    .then((result) => {
       if (result) {
-        console.log("\n" + "=".repeat(80));
+        console.log(`\n${"=".repeat(80)}`);
         console.log("Summary");
         console.log("=".repeat(80));
         console.log(`Instruction: ${result.instructionName}`);

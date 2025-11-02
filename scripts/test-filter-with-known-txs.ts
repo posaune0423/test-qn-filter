@@ -5,29 +5,17 @@
  * that discriminators are correctly identified.
  */
 
+import { QUICKNODE_NETWORK, TEST_TRANSACTIONS } from "../src/const";
 import { QuickNodeClient } from "../src/lib/quicknode";
+import type { TestTransaction } from "../src/types";
+import { getQuickNodeApiKey, getRpcUrl } from "../src/utils/env";
 import { readFilterFile } from "../src/utils/file";
-import {
-  TEST_TRANSACTIONS,
-  getSlotFromSignature,
-  getReadyTestTransactions,
-  isTestTransactionReady
-} from "./tools/test-transactions";
+import { getSlotFromSignature } from "../src/utils/solana";
+import { getReadyTestTransactions, isTestTransactionReady } from "./tools/test-transactions";
 
 async function testFilterWithKnownTransactions(): Promise<void> {
-  const apiKey = process.env.QUICKNODE_API_KEY;
-  if (!apiKey) {
-    console.error("Error: QUICKNODE_API_KEY environment variable is required");
-    console.error("Please set it in .env file");
-    process.exit(1);
-  }
-
-  const rpcUrl = process.env.QUICKNODE_RPC_URL || process.env.RPC_URL;
-  if (!rpcUrl) {
-    console.error("Error: QUICKNODE_RPC_URL or RPC_URL environment variable is required");
-    console.error("Please set it in .env file");
-    process.exit(1);
-  }
+  const apiKey = getQuickNodeApiKey();
+  const rpcUrl = getRpcUrl();
 
   console.log("=".repeat(80));
   console.log("Testing filter.js with known Drift transactions");
@@ -36,13 +24,13 @@ async function testFilterWithKnownTransactions(): Promise<void> {
 
   const client = new QuickNodeClient({ apiKey });
   const filterFunction = await readFilterFile("src/filter.js");
-  const network = "solana-mainnet";
+  const network = QUICKNODE_NETWORK;
 
   let passCount = 0;
   let failCount = 0;
   let skippedCount = 0;
 
-  const allTransactions = Object.entries(TEST_TRANSACTIONS);
+  const allTransactions = Object.entries(TEST_TRANSACTIONS) as Array<[string, TestTransaction]>;
   const readyTransactions = Object.entries(getReadyTestTransactions());
 
   console.log(`Total test transactions: ${allTransactions.length}`);
@@ -59,8 +47,9 @@ async function testFilterWithKnownTransactions(): Promise<void> {
     }
     console.log(`\nTesting: ${instructionName}`);
     console.log(`  Description: ${txInfo.description}`);
-    console.log(`  Signature: ${txInfo.signature}`);
-    console.log(`  Discriminator: ${txInfo.discriminator}`);
+    console.log(`  Signature: https://solscan.io/tx/${txInfo.signature}`);
+    console.log(`  Discriminator (RPC):       ${txInfo.discriminator}`);
+    console.log(`  Discriminator (QuickNode): ${txInfo.quicknodeDiscriminator || "N/A"}`);
     console.log(`  Expected: ${txInfo.shouldMatch ? "MATCH" : "NO MATCH"}`);
 
     try {
@@ -73,10 +62,10 @@ async function testFilterWithKnownTransactions(): Promise<void> {
       const filteredData = result.filtered_data || result.result;
 
       // Check if transaction was matched
-      let matched = false;
-      if (filteredData?.matchedTransactions && Array.isArray(filteredData.matchedTransactions)) {
-        matched = filteredData.matchedTransactions.some(
-          (tx: any) => tx.signature === txInfo.signature
+      let matched: boolean = false;
+      if (filteredData && Array.isArray(filteredData)) {
+        matched = filteredData.some((block) =>
+          block.transactions.some((tx) => tx.signature === txInfo.signature),
         );
       }
 
@@ -84,10 +73,13 @@ async function testFilterWithKnownTransactions(): Promise<void> {
       const passed = matched === txInfo.shouldMatch;
 
       if (passed) {
-        console.log(`  ✓ PASS: Filter ${matched ? "matched" : "did not match"} as expected`);
+        const matchStatus = matched === true ? "matched" : "did not match";
+        console.log(`  ✓ PASS: Filter ${matchStatus} as expected`);
         passCount++;
       } else {
-        console.log(`  ✗ FAIL: Filter ${matched ? "matched" : "did not match"} but expected ${txInfo.shouldMatch ? "match" : "no match"}`);
+        const matchStatus = matched === true ? "matched" : "did not match";
+        const expectedStatus = txInfo.shouldMatch ? "match" : "no match";
+        console.log(`  ✗ FAIL: Filter ${matchStatus} but expected ${expectedStatus}`);
         failCount++;
 
         // Show debug info on failure
@@ -101,10 +93,10 @@ async function testFilterWithKnownTransactions(): Promise<void> {
     }
 
     // Small delay to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
-  console.log("\n" + "=".repeat(80));
+  console.log(`\n${"=".repeat(80)}`);
   console.log("Test Summary");
   console.log("=".repeat(80));
   console.log(`Total transactions: ${allTransactions.length}`);
@@ -124,9 +116,10 @@ async function testFilterWithKnownTransactions(): Promise<void> {
 
 // Run tests
 testFilterWithKnownTransactions()
-.then(() => {
-  process.exit(0);
-}).catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
+  .then(() => {
+    process.exit(0);
   })
+  .catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  });

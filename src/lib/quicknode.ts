@@ -43,7 +43,7 @@ export interface FilteredBlock {
 
 export interface TestFilterResponse {
   filtered_data?: FilteredBlock[] | null;
-  result?: any;
+  result?: FilteredBlock[] | null;
   logs?: string[];
   block?: string;
   network?: string;

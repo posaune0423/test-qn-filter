@@ -3,13 +3,19 @@
  *
  * Monitors Drift protocol perp trading instructions and forwards to webhook.
  * All data parsing/decoding is handled by the webhook endpoint using drift-sdk.
+ *
+ * Note: This file runs in QuickNode's filter environment and cannot import modules.
+ * Constants are defined here to match src/const.ts for consistency.
+ * @see src/const.ts for the canonical source of these constants
  */
 
+// These constants match src/const.ts
 const DRIFT_PROGRAM_ID = 'dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH';
 
 // Perp instruction discriminators (first 12 chars of base64 data)
 // Note: QuickNode Streams uses a different data format than RPC
 // These are the actual discriminators from QuickNode Streams, not from RPC
+// @see src/const.ts for the canonical source
 const PERP_DISCRIMINATORS = [
     'Pe62ShZLxbSn',  // placePerpOrder
     'oktpafA6BG3U',  // placeAndTakePerpOrder

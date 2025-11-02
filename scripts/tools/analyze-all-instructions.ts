@@ -3,8 +3,10 @@
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
+import { DRIFT_PROGRAM_ID } from "../../src/const";
+import { getOptionalRpcUrl } from "../../src/utils/env";
 
-const DRIFT_PROGRAM_ID = new PublicKey("dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH");
+const DRIFT_PROGRAM_ID_PK = new PublicKey(DRIFT_PROGRAM_ID);
 
 async function analyzeAllInstructions(signature: string, rpcUrl: string) {
   const connection = new Connection(rpcUrl, "confirmed");
@@ -29,19 +31,25 @@ async function analyzeAllInstructions(signature: string, rpcUrl: string) {
 
   message.compiledInstructions.forEach((ix, idx) => {
     const programId = accountKeys[ix.programIdIndex];
+    if (!programId) {
+      console.log(`\nInstruction #${idx}:`);
+      console.log(`  Program: undefined (index ${ix.programIdIndex} out of bounds)`);
+      return;
+    }
+
     const data = Buffer.from(ix.data);
 
     console.log(`\nInstruction #${idx}:`);
     console.log(`  Program: ${programId.toBase58()}`);
     console.log(`  Data length: ${data.length} bytes`);
 
-    if (programId.equals(DRIFT_PROGRAM_ID) && data.length >= 8) {
+    if (programId.equals(DRIFT_PROGRAM_ID_PK) && data.length >= 8) {
       const disc = data.slice(0, 8);
-      const first12 = disc.toString('base64').substring(0, 12);
+      const first12 = disc.toString("base64").substring(0, 12);
       console.log(`  ✅ DRIFT INSTRUCTION`);
-      console.log(`  Discriminator (full):  ${disc.toString('base64')}`);
+      console.log(`  Discriminator (full):  ${disc.toString("base64")}`);
       console.log(`  Discriminator (12chr): ${first12}`);
-      console.log(`  Discriminator (hex):   0x${disc.toString('hex')}`);
+      console.log(`  Discriminator (hex):   0x${disc.toString("hex")}`);
     }
   });
 
@@ -49,24 +57,30 @@ async function analyzeAllInstructions(signature: string, rpcUrl: string) {
   console.log("=".repeat(80));
 
   if (tx.meta?.innerInstructions) {
-    tx.meta.innerInstructions.forEach(inner => {
+    tx.meta.innerInstructions.forEach((inner) => {
       console.log(`\n🔗 Inner instructions for top-level instruction #${inner.index}:`);
 
       inner.instructions.forEach((ix, idx) => {
         const programId = accountKeys[ix.programIdIndex];
+        if (!programId) {
+          console.log(`\n  Inner #${idx}:`);
+          console.log(`    Program: undefined (index ${ix.programIdIndex} out of bounds)`);
+          return;
+        }
+
         const data = Buffer.from(ix.data);
 
         console.log(`\n  Inner #${idx}:`);
         console.log(`    Program: ${programId.toBase58()}`);
         console.log(`    Data length: ${data.length} bytes`);
 
-        if (programId.equals(DRIFT_PROGRAM_ID) && data.length >= 8) {
+        if (programId.equals(DRIFT_PROGRAM_ID_PK) && data.length >= 8) {
           const disc = data.slice(0, 8);
-          const first12 = disc.toString('base64').substring(0, 12);
+          const first12 = disc.toString("base64").substring(0, 12);
           console.log(`    ✅ DRIFT CPI`);
-          console.log(`    Discriminator (full):  ${disc.toString('base64')}`);
+          console.log(`    Discriminator (full):  ${disc.toString("base64")}`);
           console.log(`    Discriminator (12chr): ${first12}`);
-          console.log(`    Discriminator (hex):   0x${disc.toString('hex')}`);
+          console.log(`    Discriminator (hex):   0x${disc.toString("hex")}`);
         }
       });
     });
@@ -77,7 +91,7 @@ async function analyzeAllInstructions(signature: string, rpcUrl: string) {
   console.log("\n\n📝 Program logs:");
   console.log("=".repeat(80));
   if (tx.meta?.logMessages) {
-    tx.meta.logMessages.forEach(log => {
+    tx.meta.logMessages.forEach((log) => {
       if (log.includes("Instruction:") || log.includes("invoke")) {
         console.log(log);
       }
@@ -86,7 +100,7 @@ async function analyzeAllInstructions(signature: string, rpcUrl: string) {
 }
 
 async function main() {
-  const rpcUrl = process.env.RPC_URL || process.env.QUICKNODE_RPC_URL;
+  const rpcUrl = getOptionalRpcUrl();
 
   if (!rpcUrl) {
     console.error("Error: RPC_URL or QUICKNODE_RPC_URL required");

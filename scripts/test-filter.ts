@@ -16,10 +16,12 @@
  *   QUICKNODE_RPC_URL - Your QuickNode Solana RPC endpoint (optional, for latest block fetching)
  */
 
+import { QUICKNODE_NETWORK } from "../src/const";
 // removed: node:path (no longer needed)
-import { Connection } from "@solana/web3.js";
 import { type FilteredBlock, type FilteredTransaction, QuickNodeClient } from "../src/lib/quicknode";
+import { getOptionalRpcUrl, getQuickNodeApiKey } from "../src/utils/env";
 import { readFilterFile } from "../src/utils/file";
+import { getLatestSlots, getSlotFromSignature } from "../src/utils/solana";
 
 // Parse --latest argument with optional value
 function parseLatestArg(args: string[], index: number): { value: number; skipNext: boolean } {
@@ -52,40 +54,6 @@ function parseArgs() {
   return parsed;
 }
 
-// Get latest slots from Solana RPC
-async function getLatestSlots(rpcUrl: string, count: number): Promise<number[]> {
-  const connection = new Connection(rpcUrl, "confirmed");
-  const latestSlot = await connection.getSlot();
-  const slots: number[] = [];
-
-  // Get slots from latest backwards
-  for (let i = 0; i < count; i++) {
-    slots.push(latestSlot - i);
-  }
-
-  return slots;
-}
-
-/**
- * Get slot from transaction signature
- */
-async function getSlotFromTransaction(txSignature: string, rpcUrl: string): Promise<number> {
-  const connection = new Connection(rpcUrl, "confirmed");
-  const tx = await connection.getTransaction(txSignature, {
-    maxSupportedTransactionVersion: 0,
-  });
-
-  if (!tx) {
-    throw new Error(`Transaction not found: ${txSignature}`);
-  }
-
-  if (!tx.slot) {
-    throw new Error(`Transaction slot not found: ${txSignature}`);
-  }
-
-  return tx.slot;
-}
-
 /**
  * Determine which blocks to test based on command line arguments
  */
@@ -100,7 +68,7 @@ async function determineBlocksToTest(
       process.exit(1);
     }
     console.log(`Fetching slot from transaction: ${args.tx}`);
-    const slot = await getSlotFromTransaction(args.tx, rpcUrl);
+    const slot = await getSlotFromSignature(args.tx, rpcUrl);
     console.log(`Found slot: ${slot}`);
     return [slot.toString()];
   }
@@ -139,7 +107,7 @@ async function determineBlocksToTest(
 /**
  * Format instruction name for display
  */
-function _formatInstructionName(ix: any): string {
+function _formatInstructionName(ix: { instructionName?: string; discriminator?: string }): string {
   if (ix.instructionName && ix.instructionName !== "unknown") return ix.instructionName;
   const disc = ix.discriminator;
   if (disc && disc.length >= 11) {
@@ -230,7 +198,7 @@ async function displayTransaction(tx: FilteredTransaction, txIndex: number): Pro
 /**
  * Display a single block
  */
-async function displayBlock(blockData: FilteredBlock | any, index: number): Promise<void> {
+async function displayBlock(blockData: FilteredBlock, index: number): Promise<void> {
   console.log(`  Block ${index + 1} (Slot: ${blockData.block?.slot}):`);
   if (blockData.transactions) {
     console.log(`    ${blockData.transactions.length} Drift transaction(s)\n`);
@@ -261,7 +229,7 @@ async function analyzeFilterResult(result: Awaited<ReturnType<QuickNodeClient["t
   if (Array.isArray(filteredData)) {
     console.log(`\n  ✓ Found ${filteredData.length} matching block(s)\n`);
     for (let index = 0; index < filteredData.length; index++) {
-      await displayBlock(filteredData[index], index);
+      await displayBlock(filteredData[index] as FilteredBlock, index);
     }
   } else {
     console.log(`  Filtered data: ${JSON.stringify(filteredData, null, 2)}`);
@@ -337,14 +305,8 @@ interface TestResult {
 async function testFilter(): Promise<void> {
   // Load environment variables
   // Bun automatically loads .env file
-  const apiKey = process.env.QUICKNODE_API_KEY;
-  if (!apiKey) {
-    console.error("Error: QUICKNODE_API_KEY environment variable is required");
-    console.error("Please set it in .env file: QUICKNODE_API_KEY=your_api_key");
-    process.exit(1);
-  }
-
-  const rpcUrl = process.env.QUICKNODE_RPC_URL || process.env.RPC_URL || undefined;
+  const apiKey = getQuickNodeApiKey();
+  const rpcUrl = getOptionalRpcUrl();
   if (!rpcUrl && !process.argv.includes("--block")) {
     console.warn("Warning: QUICKNODE_RPC_URL not set. Cannot fetch latest blocks without --block option.");
     console.warn("Set QUICKNODE_RPC_URL in .env file or use --block option to specify a block.");
@@ -352,7 +314,7 @@ async function testFilter(): Promise<void> {
 
   // Parse command line arguments
   const args = parseArgs();
-  const network = "solana-mainnet";
+  const network = QUICKNODE_NETWORK;
 
   // Initialize QuickNode client
   const client = new QuickNodeClient({ apiKey });

@@ -2,29 +2,21 @@
  * Get QuickNode format discriminators for all test transactions
  */
 
+import { DRIFT_PROGRAM_ID, QUICKNODE_NETWORK, TEST_TRANSACTIONS } from "../../src/const";
 import { QuickNodeClient } from "../../src/lib/quicknode";
-import { readFilterFile } from "../../src/utils/file";
-import { TEST_TRANSACTIONS, getSlotFromSignature } from "./test-transactions";
+import { getQuickNodeApiKey, getRpcUrl } from "../../src/utils/env";
+import { getSlotFromSignature } from "../../src/utils/solana";
 
 async function getQuickNodeDiscriminators() {
-  const apiKey = process.env.QUICKNODE_API_KEY;
-  if (!apiKey) {
-    console.error("Error: QUICKNODE_API_KEY required");
-    process.exit(1);
-  }
-
-  const rpcUrl = process.env.RPC_URL || process.env.QUICKNODE_RPC_URL;
-  if (!rpcUrl) {
-    console.error("Error: RPC_URL or QUICKNODE_RPC_URL required");
-    process.exit(1);
-  }
+  const apiKey = getQuickNodeApiKey();
+  const rpcUrl = getRpcUrl();
 
   const client = new QuickNodeClient({ apiKey });
-  const network = "solana-mainnet";
+  const network = QUICKNODE_NETWORK;
 
   // Create a debug filter that finds our transaction and logs its discriminator
   const debugFilter = `
-    const DRIFT_PROGRAM_ID = 'dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH';
+    const DRIFT_PROGRAM_ID = '${DRIFT_PROGRAM_ID}';
 
     function main(stream) {
       const data = stream.data[0];
@@ -65,15 +57,28 @@ async function getQuickNodeDiscriminators() {
       const slot = await getSlotFromSignature(txInfo.signature, rpcUrl);
       console.log(`  Slot: ${slot}`);
 
-      const filter = debugFilter.replace('__TARGET_SIG__', txInfo.signature);
-      const result = await client.testFilter(network, slot.toString(), filter);
+      const filter = debugFilter.replace("__TARGET_SIG__", txInfo.signature);
+      const testResult = await client.testFilter(network, slot.toString(), filter);
 
-      const filteredData = result.filtered_data || result.result;
+      // Debug filter returns custom shape: { found: boolean, signature?, discriminator?, fullData? } | null
+      // Handle both array (FilteredBlock[]) and direct object responses
+      const rawData = testResult.filtered_data || testResult.result;
+      const filteredData = Array.isArray(rawData) ? rawData[0] : rawData;
 
-      if (filteredData?.found) {
-        console.log(`  ✅ QuickNode discriminator: ${filteredData.discriminator}`);
+      // Type guard for debug filter response - treat as unknown first to allow proper narrowing
+      const debugResult = filteredData as unknown;
+      if (
+        debugResult &&
+        typeof debugResult === "object" &&
+        "found" in debugResult &&
+        debugResult.found === true &&
+        "discriminator" in debugResult &&
+        typeof debugResult.discriminator === "string"
+      ) {
+        const matchResult = debugResult as { found: true; signature: string; discriminator: string; fullData: string };
+        console.log(`  ✅ QuickNode discriminator: ${matchResult.discriminator}`);
         console.log(`  RPC discriminator:        ${txInfo.discriminator}`);
-        console.log(`  Match: ${filteredData.discriminator === txInfo.discriminator ? '✅' : '❌'}`);
+        console.log(`  Match: ${matchResult.discriminator === txInfo.discriminator ? "✅" : "❌"}`);
       } else {
         console.log(`  ❌ Transaction not found in block`);
       }
@@ -81,7 +86,7 @@ async function getQuickNodeDiscriminators() {
       console.log(`  ❌ Error: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
 
