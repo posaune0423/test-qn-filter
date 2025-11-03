@@ -1,13 +1,9 @@
 import { DRIFT_PROGRAM_ID, QUICKNODE_NETWORK, TEST_TRANSACTIONS } from "../src/const";
 import { driftClient } from "../src/lib/drift";
 import { QuickNodeClient } from "../src/lib/quicknode";
-import {
-  type DecodedInstruction,
-  decodeSignedMsgOrder,
-  formatDecodedInstruction,
-  isPlaceSignedMsgTakerOrder,
-} from "../src/utils/drift-decoder";
+import { type DecodedInstruction, decodeSignedMsgOrder, isPlaceSignedMsgTakerOrder } from "../src/utils/drift-decoder";
 import { getQuickNodeApiKey, getRpcUrl } from "../src/utils/env";
+import { displayFormattedOrder, formatDecodedOrder } from "../src/utils/order-formatter";
 import { decodeBase58, getSlotFromSignature } from "../src/utils/solana";
 
 /**
@@ -191,13 +187,17 @@ async function main() {
   }
 
   // Display decoded results
-  for (const decoded of decodedInstructions) {
-    console.log(`\n${formatDecodedInstruction(decoded)}`);
-  }
-
   console.log(`\n${"=".repeat(80)}`);
-  console.log("Decode Complete");
+  console.log("Decoded Perp Orders");
   console.log("=".repeat(80));
+
+  for (const decoded of decodedInstructions) {
+    if (decoded.decoded) {
+      const formatted = formatDecodedOrder(targetSignature, decoded.type, decoded.decoded);
+      console.log("");
+      displayFormattedOrder(formatted);
+    }
+  }
 }
 
 main()

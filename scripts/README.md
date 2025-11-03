@@ -4,9 +4,66 @@
 
 ## メインスクリプト
 
+### `test-filter.ts`
+
+QuickNode Streamsのフィルター機能をテストし、perpオーダーをデコードして表示します。
+
+**使用方法:**
+
+```bash
+# 特定のトランザクションをテスト
+bun run scripts/test-filter.ts --tx <signature>
+
+# 特定のスロットをテスト
+bun run scripts/test-filter.ts --block <slot>
+
+# 最新のN個のスロットをテスト
+bun run scripts/test-filter.ts --latest 10
+```
+
+**機能:**
+- QuickNode Streamsフィルターのテスト
+- マッチしたperpオーダーのデコードと表示
+- 人間が読みやすいフォーマットで出力（market, direction, size, priceなど）
+
+**出力例:**
+```
+tx: https://solscan.io/tx/[signature]
+method: placeSignedMsgTakerOrder
+market: NOT-PERP
+direction: Long
+size: 4398.0465
+price: 15319.70
+orderType: Limit
+```
+
+### `test-filter-with-known-txs.ts`
+
+既知のテストトランザクションを使用してフィルターの正確性を検証します。
+
+**使用方法:**
+
+```bash
+bun run scripts/test-filter-with-known-txs.ts
+```
+
+**機能:**
+- 7種類のDrift perp instructionをテスト
+- フィルターが正しくマッチ/除外するか検証
+- デコード可能なオーダーは詳細を表示
+
+**テスト対象:**
+- placePerpOrder
+- placeAndTakePerpOrder
+- placeAndMakePerpOrder
+- placeSignedMsgTakerOrder
+- placeAndMakeSignedMsgPerpOrder
+- placeSpotOrder（除外されるべき）
+- placeOrders（除外されるべき）
+
 ### `test-decode.ts`
 
-Solana RPCからトランザクションを取得し、`placeSignedMsgTakerOrder`のinstruction dataをデコードします。
+Solana RPCからトランザクションを取得し、Drift instructionをデコードします。
 
 **使用方法:**
 
@@ -15,20 +72,61 @@ bun run scripts/test-decode.ts
 ```
 
 **機能:**
-
 - トランザクションの基本情報を表示
 - Drift programのinstructionを抽出
 - `placeSignedMsgTakerOrder`のメッセージをデコード
-  - Signature
-  - Signing authority
-  - Order parameters (orderType, direction, price, etc.)
-  - Sub-account ID
-  - Slot
-  - UUID
 
-**実装:**
+### `test-decode-quicknode.ts`
 
-このスクリプトは、`src/utils/drift-decoder.ts`モジュールを使用しています。デコード関数は他のプロジェクトでも再利用可能です。
+QuickNode Streams APIを使用してトランザクションデータを取得し、デコードします。
+
+**使用方法:**
+
+```bash
+bun run scripts/test-decode-quicknode.ts
+```
+
+**機能:**
+- QuickNode test-filter APIを使用してトランザクションを取得
+- Base58エンコードされたdataをデコード
+- perpオーダーの詳細を表示
+
+## ツールスクリプト (`tools/`)
+
+### `verify-discriminators.ts`
+
+トランザクションのdiscriminatorを検証します。新しいテストトランザクションを追加する際に使用します。
+
+**使用方法:**
+
+```bash
+bun scripts/tools/verify-discriminators.ts <signature> <instructionName>
+```
+
+**例:**
+```bash
+bun scripts/tools/verify-discriminators.ts 2XZEL1VY8d8... placeSignedMsgTakerOrder
+```
+
+## 環境変数
+
+以下の環境変数が必要です：
+
+- `QUICKNODE_RPC_URL`: QuickNode RPC URL（必須）
+- `QUICKNODE_API_KEY`: QuickNode API Key（Streams APIを使用する場合、必須）
+
+`.env`ファイルに設定してください：
+
+```env
+QUICKNODE_RPC_URL=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/xxx/
+QUICKNODE_API_KEY=your-api-key
+```
+
+## 実装の詳細
+
+### デコーダーモジュール
+
+`src/utils/drift-decoder.ts`モジュールは、Drift instructionのデコード機能を提供します：
 
 ```typescript
 import { decodeDriftInstructions, formatDecodedInstruction } from "../src/utils/drift-decoder";
@@ -42,123 +140,27 @@ for (const decoded of decodedInstructions) {
 }
 ```
 
-**重要な実装の詳細:**
+### フォーマッターモジュール
 
-`placeSignedMsgTakerOrder`のinstruction dataは以下の構造を持ちます：
-
-```
-- 0-7: instruction discriminator (8 bytes)
-- 8-11: Vec<u8> length (u32, 4 bytes)
-- 12-75: signature (64 bytes)
-- 76-107: signing_authority (32 bytes)
-- 108-109: message_length (u16, 2 bytes)
-- 110以降: message (hex文字列としてエンコードされたSignedMsgOrderParamsMessage)
-- 最後: isDelegateSigner (bool, 1 byte)
-```
-
-**Drift SDKの便利関数によるデコード:**
-
-Drift SDKの`decodeSignedMsgOrderParamsMessage`メソッドを使用すると、わずか2行でデコードが完了します：
+`src/utils/order-formatter.ts`モジュールは、デコードされたオーダーを人間が読みやすい形式に変換します：
 
 ```typescript
-// 1. hex文字列からBufferへ変換
-const signedMsgOrderParamsBuf = Buffer.from(messageHexString, "hex");
+import { formatDecodedOrder, displayFormattedOrder } from "../src/utils/order-formatter";
 
-// 2. SDKメソッドでデコード（discriminator除去とパディングは自動）
-const decodedMessage = driftClient.decodeSignedMsgOrderParamsMessage(
-  signedMsgOrderParamsBuf,
-  isDelegateSigner
-);
+// デコードされたオーダーをフォーマット
+const formatted = formatDecodedOrder(signature, method, decodedOrder);
+
+// 表示
+displayFormattedOrder(formatted);
 ```
 
-SDKが内部で自動的に行う処理：
-- discriminator（最初の8バイト）の除去
-- 128バイトのパディング追加（メッセージが小さい場合）
-- IDLバージョン互換性処理
+**変換内容:**
+- 16進数の数値を実数に変換（BASE_PRECISION = 10^9, PRICE_PRECISION = 10^6）
+- マーケットインデックスをマーケット名に変換（SOL-PERP, BTC-PERP, NOT-PERPなど）
+- Direction/OrderTypeの列挙型を文字列に変換
 
-この実装は、オンチェーンのRustコード（`sig_verification.rs`）と同様のロジックで動作します。
+## 参考ドキュメント
 
-### `test-decode-quicknode.ts`
-
-QuickNode Streams APIを使用してトランザクションデータを取得し、instruction dataを表示します。
-
-**使用方法:**
-
-```bash
-bun run scripts/test-decode-quicknode.ts
-```
-
-### `test-filter.ts`
-
-QuickNode Streamsのフィルター機能をテストします。
-
-**使用方法:**
-
-```bash
-bun run scripts/test-filter.ts
-```
-
-### `test-filter-with-known-txs.ts`
-
-既知のトランザクションを使用してフィルターをテストします。
-
-**使用方法:**
-
-```bash
-bun run scripts/test-filter-with-known-txs.ts
-```
-
-## 分析スクリプト
-
-### `compare-discriminators.ts`
-
-QuickNode StreamsとRPCのdiscriminatorを比較します。
-
-### `compare-instruction-formats.ts`
-
-QuickNode StreamsとRPCのinstruction dataフォーマットを比較します。
-
-### `analyze-format-differences.ts`
-
-QuickNode StreamsとRPCのデータフォーマットの違いを詳細に分析します。
-
-## ツールスクリプト (`tools/`)
-
-### `verify-discriminators.ts`
-
-トランザクションのdiscriminatorを検証します。
-
-**使用方法:**
-
-```bash
-bun scripts/tools/verify-discriminators.ts <signature> <instructionName>
-```
-
-### `find-drift-transactions.ts`
-
-特定のブロック範囲からDriftトランザクションを検索します。
-
-### `analyze-transaction-details.ts`
-
-トランザクションの詳細を分析します。
-
-### `analyze-all-instructions.ts`
-
-トランザクション内のすべてのinstruction（CPIを含む）を分析します。
-
-### `get-quicknode-discriminators.ts`
-
-QuickNode Streamsから実際のdiscriminatorを取得します。
-
-### `test-transactions.ts`
-
-テストトランザクションを実行します。
-
-## 環境変数
-
-以下の環境変数が必要です：
-
-- `QUICKNODE_RPC_URL`: QuickNode RPC URL
-- `QUICKNODE_API_KEY`: QuickNode API Key (Streams APIを使用する場合)
-
-`.env`ファイルに設定してください。
+- `../docs/quicknode-vs-rpc-format.md` - QuickNode StreamsとRPCのデータフォーマットの違い
+- `../docs/drift-perp-order-methods.md` - Drift perpオーダーメソッドの説明
+- `../docs/drift-signed-message-decoding.md` - 署名付きメッセージのデコード方法

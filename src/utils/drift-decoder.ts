@@ -10,8 +10,8 @@
  * - Drift SDKを使用した自動デコード
  */
 
+import type { DriftClient, SignedMsgOrderParamsDelegateMessage, SignedMsgOrderParamsMessage } from "@drift-labs/sdk";
 import type { PublicKey, VersionedTransactionResponse } from "@solana/web3.js";
-import type { DriftClient } from "@drift-labs/sdk";
 
 // ============== Types ==============
 
@@ -22,7 +22,7 @@ export type DecodedSignedMsgOrder = {
   signature: Buffer;
   signingAuthority: Buffer;
   isDelegateSigner: boolean;
-  message: unknown; // Drift SDKの型に依存
+  message: SignedMsgOrderParamsMessage | SignedMsgOrderParamsDelegateMessage;
 };
 
 /**
@@ -44,9 +44,28 @@ export type DecodedInstruction = {
  * base64: IE9lixkGYg8=
  * hex: 0x204f658b1906620f
  */
-const PLACE_SIGNED_MSG_TAKER_ORDER_DISCRIMINATOR = Buffer.from([
-  0x20, 0x4f, 0x65, 0x8b, 0x19, 0x06, 0x62, 0x0f,
-]);
+const PLACE_SIGNED_MSG_TAKER_ORDER_DISCRIMINATOR = Buffer.from([0x20, 0x4f, 0x65, 0x8b, 0x19, 0x06, 0x62, 0x0f]);
+
+/**
+ * Instruction data構造のオフセット定数
+ */
+const OFFSETS = {
+  DISCRIMINATOR: 0,
+  DISCRIMINATOR_SIZE: 8,
+  VEC_LENGTH: 0,
+  VEC_LENGTH_SIZE: 4,
+  SIGNATURE: 4,
+  SIGNATURE_SIZE: 64,
+  SIGNING_AUTHORITY_SIZE: 32,
+  MESSAGE_LENGTH_SIZE: 2,
+} as const;
+
+/**
+ * 最小データ長の定数
+ */
+const MIN_DATA_LENGTH = {
+  AFTER_DISCRIMINATOR: 107, // Vec length(4) + signature(64) + signing_authority(32) + message_length(2) + message(最小5)
+} as const;
 
 // ============== Core Functions ==============
 
@@ -57,10 +76,10 @@ const PLACE_SIGNED_MSG_TAKER_ORDER_DISCRIMINATOR = Buffer.from([
  * @returns discriminatorが一致する場合true
  */
 export function isPlaceSignedMsgTakerOrder(ixData: Buffer): boolean {
-  if (ixData.length < 8) {
+  if (ixData.length < OFFSETS.DISCRIMINATOR_SIZE) {
     return false;
   }
-  const discriminator = ixData.slice(0, 8);
+  const discriminator = ixData.slice(OFFSETS.DISCRIMINATOR, OFFSETS.DISCRIMINATOR_SIZE);
   return discriminator.equals(PLACE_SIGNED_MSG_TAKER_ORDER_DISCRIMINATOR);
 }
 
@@ -83,52 +102,43 @@ export function isPlaceSignedMsgTakerOrder(ixData: Buffer): boolean {
  * @param driftClient - Drift client instance
  * @returns デコード結果、またはエラー時はundefined
  */
-export function decodeSignedMsgOrder(
-  ixData: Buffer,
-  driftClient: DriftClient
-): DecodedSignedMsgOrder | undefined {
-  // Discriminatorチェック
+export function decodeSignedMsgOrder(ixData: Buffer, driftClient: DriftClient): DecodedSignedMsgOrder | undefined {
   if (!isPlaceSignedMsgTakerOrder(ixData)) {
     return undefined;
   }
 
-  // Instruction discriminatorを除去
-  const dataAfterDiscriminator = ixData.slice(8);
+  const dataAfterDiscriminator = ixData.slice(OFFSETS.DISCRIMINATOR_SIZE);
 
-  // 最小長チェック
-  if (dataAfterDiscriminator.length < 107) {
-    throw new Error("Data too short");
+  if (dataAfterDiscriminator.length < MIN_DATA_LENGTH.AFTER_DISCRIMINATOR) {
+    throw new Error(
+      `Data too short: expected at least ${MIN_DATA_LENGTH.AFTER_DISCRIMINATOR} bytes, got ${dataAfterDiscriminator.length}`,
+    );
   }
 
-  // Vec<u8>の長さを取得
-  const vecLength = dataAfterDiscriminator.readUInt32LE(0);
+  const vecLength = dataAfterDiscriminator.readUInt32LE(OFFSETS.VEC_LENGTH);
 
-  // signature(64) + signing_authority(32) + message_length(2) + message(hex文字列)
-  const signature = dataAfterDiscriminator.slice(4, 68);
-  const signingAuthority = dataAfterDiscriminator.slice(68, 100);
-  const messageLengthRaw = dataAfterDiscriminator.readUInt16LE(100);
+  const signatureStart = OFFSETS.SIGNATURE;
+  const signatureEnd = signatureStart + OFFSETS.SIGNATURE_SIZE;
+  const signingAuthorityEnd = signatureEnd + OFFSETS.SIGNING_AUTHORITY_SIZE;
+  const messageLengthOffset = signingAuthorityEnd;
+  const messageOffset = messageLengthOffset + OFFSETS.MESSAGE_LENGTH_SIZE;
+
+  const signature = dataAfterDiscriminator.slice(signatureStart, signatureEnd);
+  const signingAuthority = dataAfterDiscriminator.slice(signatureEnd, signingAuthorityEnd);
+  const messageLengthRaw = dataAfterDiscriminator.readUInt16LE(messageLengthOffset);
   const messageHexString = dataAfterDiscriminator
-    .slice(102, 102 + messageLengthRaw)
+    .slice(messageOffset, messageOffset + messageLengthRaw)
     .toString("ascii");
 
-  // isDelegateSignerはVec<u8>の後（1バイト）
-  const isDelegateSignerIndex = 4 + vecLength;
+  const isDelegateSignerIndex = OFFSETS.VEC_LENGTH_SIZE + vecLength;
   if (dataAfterDiscriminator.length < isDelegateSignerIndex + 1) {
-    throw new Error("Data too short for isDelegateSigner");
+    throw new Error("Data too short for isDelegateSigner flag");
   }
 
-  const isDelegateSigner =
-    dataAfterDiscriminator.readUInt8(isDelegateSignerIndex) === 1;
+  const isDelegateSigner = dataAfterDiscriminator.readUInt8(isDelegateSignerIndex) === 1;
 
-  // SDKの便利関数を使用したシンプルなデコード（2行で完了）
-  // 1. hex文字列からBufferへ変換
   const signedMsgOrderParamsBuf = Buffer.from(messageHexString, "hex");
-
-  // 2. SDKメソッドでデコード（discriminator除去とパディングは自動）
-  const message = driftClient.decodeSignedMsgOrderParamsMessage(
-    signedMsgOrderParamsBuf,
-    isDelegateSigner
-  );
+  const message = driftClient.decodeSignedMsgOrderParamsMessage(signedMsgOrderParamsBuf, isDelegateSigner);
 
   return {
     signature,
@@ -153,7 +163,7 @@ export function decodeInstruction(
   accountKeys: readonly PublicKey[],
   index: number,
   driftProgramId: PublicKey,
-  driftClient: DriftClient
+  driftClient: DriftClient,
 ): DecodedInstruction {
   const programId = accountKeys[ix.programIdIndex];
 
@@ -196,8 +206,7 @@ export function decodeInstruction(
         programId: programId.toString(),
         dataLength: ixData.length,
         type: "placeSignedMsgTakerOrder",
-        error:
-          error instanceof Error ? error.message : "Unknown decode error",
+        error: error instanceof Error ? error.message : "Unknown decode error",
       };
     }
   }
@@ -221,7 +230,7 @@ export function decodeInstruction(
 export function decodeDriftInstructions(
   tx: VersionedTransactionResponse,
   driftProgramId: PublicKey,
-  driftClient: DriftClient
+  driftClient: DriftClient,
 ): DecodedInstruction[] {
   const message = tx.transaction.message;
 
@@ -233,13 +242,7 @@ export function decodeDriftInstructions(
   const results: DecodedInstruction[] = [];
 
   for (const [index, ix] of message.compiledInstructions.entries()) {
-    const result = decodeInstruction(
-      ix,
-      accountKeys,
-      index,
-      driftProgramId,
-      driftClient
-    );
+    const result = decodeInstruction(ix, accountKeys, index, driftProgramId, driftClient);
 
     // Drift instructionのみを結果に含める
     if (result.type !== "unknown" || result.error !== "Not a Drift instruction") {
@@ -272,12 +275,8 @@ export function formatDecodedInstruction(decoded: DecodedInstruction): string {
   }
 
   if (decoded.decoded) {
-    lines.push(
-      `  Signature: ${decoded.decoded.signature.toString("hex").slice(0, 32)}...`
-    );
-    lines.push(
-      `  Signing authority: ${decoded.decoded.signingAuthority.toString("hex").slice(0, 32)}...`
-    );
+    lines.push(`  Signature: ${decoded.decoded.signature.toString("hex").slice(0, 32)}...`);
+    lines.push(`  Signing authority: ${decoded.decoded.signingAuthority.toString("hex").slice(0, 32)}...`);
     lines.push(`  Is delegate signer: ${decoded.decoded.isDelegateSigner}`);
     lines.push(`\n  ✅ Decoded message:`);
     lines.push(JSON.stringify(decoded.decoded.message, null, 2));

@@ -2,26 +2,29 @@
  * Test script for QuickNode filter function
  *
  * This script tests the filter.js custom filter against QuickNode's test filter endpoint.
+ * It also decodes matched Drift instructions to show order details.
  *
  * Usage:
- *   bun scripts/test-filter.ts [--block <slot>] [--latest <count>]
+ *   bun scripts/test-filter.ts [--block <slot>] [--latest <count>] [--tx <signature>]
  *
  * Examples:
  *   bun scripts/test-filter.ts --block 123456789
  *   bun scripts/test-filter.ts --latest 10
- *   bun scripts/test-filter.ts --latest 5  # Default is 10 if not specified
+ *   bun scripts/test-filter.ts --tx <transaction_signature>
  *
  * Environment variables (.env file):
  *   QUICKNODE_API_KEY - Your QuickNode API key (required)
  *   QUICKNODE_RPC_URL - Your QuickNode Solana RPC endpoint (optional, for latest block fetching)
  */
 
-import { QUICKNODE_NETWORK } from "../src/const";
-// removed: node:path (no longer needed)
-import { type FilteredBlock, type FilteredTransaction, QuickNodeClient } from "../src/lib/quicknode";
+import { DRIFT_PROGRAM_ID, QUICKNODE_NETWORK } from "../src/const";
+import { driftClient } from "../src/lib/drift";
+import { QuickNodeClient } from "../src/lib/quicknode";
+import { type DecodedInstruction, decodeSignedMsgOrder, isPlaceSignedMsgTakerOrder } from "../src/utils/drift-decoder";
 import { getOptionalRpcUrl, getQuickNodeApiKey } from "../src/utils/env";
 import { readFilterFile } from "../src/utils/file";
-import { getLatestSlots, getSlotFromSignature } from "../src/utils/solana";
+import { displayFormattedOrder, formatDecodedOrder } from "../src/utils/order-formatter";
+import { decodeBase58, getLatestSlots, getSlotFromSignature } from "../src/utils/solana";
 
 // Parse --latest argument with optional value
 function parseLatestArg(args: string[], index: number): { value: number; skipNext: boolean } {
@@ -105,134 +108,163 @@ async function determineBlocksToTest(
 }
 
 /**
- * Format instruction name for display
+ * Convert QuickNode data string to Buffer
  */
-function _formatInstructionName(ix: { instructionName?: string; discriminator?: string }): string {
-  if (ix.instructionName && ix.instructionName !== "unknown") return ix.instructionName;
-  const disc = ix.discriminator;
-  if (disc && disc.length >= 11) {
-    try {
-      const hex = Buffer.from(`${disc}=`, "base64").toString("hex").substring(0, 16);
-      return `Unknown(0x${hex})`;
-    } catch (_e) {
-      return `Unknown(${disc})`;
-    }
+function quicknodeDataToBuffer(data: string): Buffer {
+  try {
+    const decoded = decodeBase58(data);
+    return Buffer.from(decoded);
+  } catch (error) {
+    console.warn(`Failed to decode as Base58: ${error}`);
+    return Buffer.from(data, "base64");
   }
-  return "Unknown";
 }
 
 /**
- * Format authority address for display
+ * Decode QuickNode instruction if possible
  */
-// removed: _formatAuthority (not used)
+function tryDecodeInstruction(ix: { data: string; programId: string }): DecodedInstruction | null {
+  if (ix.programId !== DRIFT_PROGRAM_ID) {
+    return null;
+  }
 
-/**
- * Get simple instruction info for display
- */
-// Removed: getSimpleInstructionInfo (unused after simplifying display)
+  const ixData = quicknodeDataToBuffer(ix.data);
 
-/**
- * Display a single instruction (simple format)
- */
-// Removed: _displayInstruction (unused)
-
-/**
- * Generate discriminator mapping (same logic as build-filter.ts)
- */
-// Removed: local discriminator map generation and lookup — rely on names from filter.js
-
-/**
- * Extract method names from logs
- */
-function _extractMethodFromLogs(logs: string[]): string | null {
-  for (const log of logs) {
-    const match = log.match(/Instruction:\s+(\w+)/);
-    if (match?.[1] && match[1] !== "PostPythLazerOracleUpdate") {
-      return match[1];
+  if (isPlaceSignedMsgTakerOrder(ixData)) {
+    try {
+      const decoded = decodeSignedMsgOrder(ixData, driftClient);
+      return {
+        index: 0,
+        programId: ix.programId,
+        dataLength: ixData.length,
+        type: "placeSignedMsgTakerOrder",
+        decoded,
+      };
+    } catch (error) {
+      return {
+        index: 0,
+        programId: ix.programId,
+        dataLength: ixData.length,
+        type: "placeSignedMsgTakerOrder",
+        error: error instanceof Error ? error.message : "Unknown decode error",
+      };
     }
   }
+
   return null;
 }
 
 /**
- * Display a single transaction
+ * Display a single transaction with decoded perp orders
  */
-async function displayTransaction(tx: FilteredTransaction, txIndex: number): Promise<void> {
-  console.log(`\n    [Tx ${txIndex + 1}]`);
-  console.log(`    Tx: https://solscan.io/tx/${tx.signature}`);
-  console.log(`    Status: ${tx.success ? "✓ Success" : "✗ Failed"} | Fee: ${tx.fee} lamports`);
-
-  // Display signer from first instruction
-  if (tx.instructions && tx.instructions.length > 0) {
-    const firstIx = tx.instructions[0];
-    if (firstIx?.authority) {
-      console.log(`    Signer: ${firstIx?.authority.substring(0, 8)}...`);
-    }
-
-    // Get all method names from instructions (use filter-provided name, fallback to logs)
-    let methods = tx.instructions.map((ix) => _formatInstructionName(ix));
-    if (methods.every((m) => m === "Unknown") && tx.logs && tx.logs.length > 0) {
-      const fromLogs = _extractMethodFromLogs(tx.logs);
-      if (fromLogs) methods = [fromLogs];
-    }
-    const filteredMethods = methods.filter((m) => m !== "PostPythLazerOracleUpdate");
-
-    if (filteredMethods.length > 0) {
-      if (filteredMethods.length === 1) {
-        console.log(`    Method: ${filteredMethods[0]}`);
-      } else {
-        console.log(`    Methods:`);
-        filteredMethods.forEach((method, idx) => {
-          console.log(`      [${idx + 1}] ${method}`);
-        });
-      }
-    }
-
-    // Show instruction count
-    console.log(`    Instructions: ${tx.instructions.length}`);
-  }
-
-  console.log("");
-}
-
-/**
- * Display a single block
- */
-async function displayBlock(blockData: FilteredBlock, index: number): Promise<void> {
-  console.log(`  Block ${index + 1} (Slot: ${blockData.block?.slot}):`);
-  if (blockData.transactions) {
-    console.log(`    ${blockData.transactions.length} Drift transaction(s)\n`);
-    for (const tx of blockData.transactions) {
-      await displayTransaction(tx, blockData.transactions.indexOf(tx));
-    }
-  }
-}
-
-/**
- * Analyze and display filter result
- */
-async function analyzeFilterResult(result: Awaited<ReturnType<QuickNodeClient["testFilter"]>>): Promise<void> {
-  if (result.logs && result.logs.length > 0) {
-    console.log("  Filter function logs:");
-    result.logs.forEach((log: string) => {
-      console.log(`    ${log}`);
-    });
-  }
-
-  const filteredData = result.filtered_data || result.result;
-
-  if (!filteredData) {
-    console.log("  No matches found");
+async function displayTransaction(
+  tx: { signature: string; instructions?: Array<{ data: string; programId: string }> },
+  txIndex: number,
+): Promise<void> {
+  if (!tx.instructions || tx.instructions.length === 0) {
     return;
   }
 
-  if (Array.isArray(filteredData)) {
-    console.log(`\n  ✓ Found ${filteredData.length} matching block(s)\n`);
-    for (let index = 0; index < filteredData.length; index++) {
-      await displayBlock(filteredData[index] as FilteredBlock, index);
+  // Try to decode each instruction and collect perp orders
+  const decodedOrders: Array<{ discriminator: string; decoded: DecodedInstruction }> = [];
+
+  for (const ix of tx.instructions) {
+    if (!ix.data || !ix.programId) continue;
+
+    const discriminator = ix.data.substring(0, 12);
+    const decoded = tryDecodeInstruction({
+      data: ix.data,
+      programId: ix.programId,
+    });
+
+    if (decoded?.decoded) {
+      decodedOrders.push({ discriminator, decoded });
     }
-  } else {
-    console.log(`  Filtered data: ${JSON.stringify(filteredData, null, 2)}`);
+  }
+
+  // Only display if we have decoded perp orders
+  if (decodedOrders.length === 0) {
+    return;
+  }
+
+  console.log(`\n[Perp Order ${txIndex + 1}]`);
+  console.log("=".repeat(80));
+
+  for (const { decoded } of decodedOrders) {
+    if (decoded.decoded) {
+      const formatted = formatDecodedOrder(tx.signature, decoded.type, decoded.decoded);
+      displayFormattedOrder(formatted);
+    }
+  }
+}
+
+/**
+ * Display a single block with perp orders
+ */
+async function displayBlock(
+  blockData: { transactions?: Array<{ signature: string; instructions?: Array<{ data: string; programId: string }> }> },
+  slot: string,
+): Promise<void> {
+  if (!blockData.transactions || blockData.transactions.length === 0) {
+    return;
+  }
+
+  console.log(`\n${"=".repeat(80)}`);
+  console.log(`Slot: ${slot}`);
+  console.log("=".repeat(80));
+
+  let displayedCount = 0;
+  for (const tx of blockData.transactions) {
+    await displayTransaction(tx, displayedCount);
+    // Count only if transaction was displayed (has decoded orders)
+    if (tx.instructions && tx.instructions.length > 0) {
+      const hasDecodedOrders = tx.instructions.some((ix) => {
+        if (!ix.data || !ix.programId) return false;
+        const decoded = tryDecodeInstruction({ data: ix.data, programId: ix.programId });
+        return decoded?.decoded !== undefined;
+      });
+      if (hasDecodedOrders) displayedCount++;
+    }
+  }
+
+  if (displayedCount === 0) {
+    console.log("No decodable perp orders found in this slot");
+  }
+}
+
+/**
+ * Analyze and display filter result (perp orders only)
+ */
+async function analyzeFilterResult(
+  result: Awaited<ReturnType<QuickNodeClient["testFilter"]>>,
+  slot: string,
+): Promise<void> {
+  const filteredData = result.filtered_data || result.result;
+
+  if (!filteredData) {
+    return;
+  }
+
+  // Handle custom filter format from filter.js
+  if (typeof filteredData === "object" && "matchedTransactions" in filteredData) {
+    const customResult = filteredData as {
+      matchedTransactions?: Array<{ signature: string; instructions?: Array<{ data: string; programId: string }> }>;
+    };
+    if (customResult.matchedTransactions && customResult.matchedTransactions.length > 0) {
+      await displayBlock({ transactions: customResult.matchedTransactions }, slot);
+    }
+    return;
+  }
+
+  // Handle standard array format
+  if (Array.isArray(filteredData)) {
+    for (const block of filteredData) {
+      // Convert to our expected format
+      const blockData = block as unknown as {
+        transactions?: Array<{ signature: string; instructions?: Array<{ data: string; programId: string }> }>;
+      };
+      await displayBlock(blockData, slot);
+    }
   }
 }
 
@@ -246,11 +278,8 @@ async function testSingleBlock(
   filterFunction: string,
 ): Promise<TestResult> {
   try {
-    console.log(`\n[${block}] Calling QuickNode test filter endpoint...`);
     const result = await client.testFilter(network, block, filterFunction);
-
-    console.log(`✓ Block ${block} completed successfully`);
-    await analyzeFilterResult(result);
+    await analyzeFilterResult(result, block);
 
     return {
       block,
@@ -258,7 +287,7 @@ async function testSingleBlock(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`✗ Block ${block} failed: ${errorMessage}`);
+    console.error(`\n✗ Slot ${block} failed: ${errorMessage}`);
     return {
       block,
       result: null,
@@ -271,27 +300,19 @@ async function testSingleBlock(
  * Display test summary
  */
 function displaySummary(results: TestResult[], blocksToTest: string[]): void {
-  console.log(`\n${"=".repeat(60)}`);
-  console.log("Summary:");
-  console.log(`  Total blocks tested: ${blocksToTest.length}`);
-  console.log(`  Successful: ${results.filter((r) => !r.error).length}`);
-  console.log(`  Failed: ${results.filter((r) => r.error).length}`);
-
-  const blocksWithMatches = results.filter(
-    (r) =>
-      !r.error &&
-      r.result?.filtered_data &&
-      (Array.isArray(r.result.filtered_data) ? r.result.filtered_data.length > 0 : true),
-  ).length;
-
-  console.log(`  Blocks with matches: ${blocksWithMatches}`);
+  console.log(`\n${"=".repeat(80)}`);
+  console.log("Summary");
+  console.log("=".repeat(80));
+  console.log(`Total slots tested: ${blocksToTest.length}`);
+  console.log(`Successful: ${results.filter((r) => !r.error).length}`);
+  console.log(`Failed: ${results.filter((r) => r.error).length}`);
 
   if (results.some((r) => r.error)) {
-    console.log("\nFailed blocks:");
+    console.log("\nFailed slots:");
     results
       .filter((r) => r.error)
       .forEach((r) => {
-        console.log(`  - Block ${r.block}: ${r.error}`);
+        console.log(`  - Slot ${r.block}: ${r.error}`);
       });
   }
 }
@@ -312,6 +333,10 @@ async function testFilter(): Promise<void> {
     console.warn("Set QUICKNODE_RPC_URL in .env file or use --block option to specify a block.");
   }
 
+  // Initialize Drift client for decoding
+  console.log("Initializing Drift client...");
+  await driftClient.subscribe();
+
   // Parse command line arguments
   const args = parseArgs();
   const network = QUICKNODE_NETWORK;
@@ -328,17 +353,20 @@ async function testFilter(): Promise<void> {
 
   // Determine which blocks to test
   const blocksToTest = await determineBlocksToTest(args, rpcUrl);
-  if (args.tx) {
-    console.log(`Testing transaction: ${args.tx}`);
-    console.log(`Testing slot: ${blocksToTest[0]}`);
-  } else if (args.block) {
-    console.log(`Testing specific block: ${args.block}`);
-  } else {
-    console.log(`Testing slots: ${blocksToTest.join(", ")}`);
-  }
 
-  console.log(`Network: ${network}`);
-  console.log("");
+  console.log(`\n${"=".repeat(80)}`);
+  console.log("Testing Drift Perp Orders");
+  console.log("=".repeat(80));
+
+  if (args.tx) {
+    console.log(`Transaction: ${args.tx}`);
+    console.log(`Slot: ${blocksToTest[0]}`);
+  } else if (args.block) {
+    console.log(`Slot: ${args.block}`);
+  } else {
+    console.log(`Slots: ${blocksToTest.join(", ")}`);
+  }
+  console.log(`Network: ${network}\n`);
 
   // Test each block
   const results: TestResult[] = [];
